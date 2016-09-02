@@ -1,0 +1,38 @@
+#ifndef __BSP_H
+#define	__BSP_H
+#include "stm32f10x.h"
+#include "controllayer.h"
+typedef struct  PERIPHRAL
+{
+    void (*GPIO_Config)(void);
+    void (*DMA_Config)(void);
+    void (*UARST_Config)(void);
+    void (*TIM1_config)(void);
+    void (*TIM1_OC3config)(void);
+    void (*TIM2_UpdateCount_Config)(void);
+    void (*Interrupts_Config)(void);
+    void (*JF24D_IO_Config)(void);
+  
+} PERIPHRAL_CONFIG;
+
+
+ #define CAN_LED_Pin     GPIO_Pin_12
+ #define CAN_LED_Port    GPIOB
+
+ #define RS485_LED_Pin   GPIO_Pin_13
+ #define RS485_LED_Port  GPIOB
+ 
+ #define RS485_PWR_Pin     GPIO_Pin_0
+#define  RS485_PWR_Port    GPIOA
+
+#define  RS485_PWR_ENABLE   GPIO_SetBits(GPIOA);
+#define  RS485_PWR_DISABLE
+
+
+/* this function is used for configurating can port */
+void Can_Config(u8 CAN_Speed, u16 Can_Addr);
+
+void UARST3_Config(PUSART_CFG usart_cfg);   
+void SysTick_init(void);
+void BSP_Init(void);
+#endif // __BSP_H

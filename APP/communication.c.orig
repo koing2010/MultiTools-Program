@@ -1,0 +1,107 @@
+/**********************************************************************************
+
+File_name:      SL8636_Slave_MCU.c
+Version:		    0.0
+Revised:        $Date:2015-8-31 to   ; $
+Description:    the main file of this project.
+Notes:          This version targets the stm32/UCos
+Editor:		      Mr.Kong
+
+**********************************************************************************/
+
+/*================================================================================
+@ Include files
+*/
+ #include "communication.h"
+ #include "stm32f10x_usart.h"
+ #include "stm32f10x_dma.h"
+/*================================================================================
+@ Global variable
+*/
+
+/*================================================================================
+@ All functions  as follow
+*/
+/*********************************************************************************
+Function:     USART1_Receive()
+Description:  First function called after startup.
+Input:        None
+Output:       None
+Return:       don't care.
+Others:
+*********************************************************************************/
+
+/*********************************************************************************
+Function:     USART1_Receive()
+Description:  First function called after startup.
+Input:        None
+Output:       None
+Return:       don't care.
+Others:
+*********************************************************************************/
+
+
+/*********************************************************************************
+Function:       USART1_SendData
+Description:  
+Input:             str : point of tx buffer 
+                length : size of tx buffer
+Output:       None
+Return:       don't care.
+Others:
+*********************************************************************************/
+void USART1_SendData(u8 *str, u8 length)
+{
+	USART_ITConfig(USART1, USART_IT_RXNE, DISABLE); 
+	for (;length>0; length--,str++)
+	{
+		USART_SendData(USART1,*str);  
+		while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
+	}
+	USART_ITConfig(USART1, USART_IT_RXNE, ENABLE); 
+}
+
+void USART2_SendData(u8 *str, u8 length)
+{
+	USART_ITConfig(USART2, USART_IT_RXNE, DISABLE); 
+	for (;length>0; length--,str++)
+	{
+		USART_SendData(USART2,*str);  
+		while (USART_GetFlagStatus(USART2, USART_FLAG_TXE) == RESET);
+	}
+	USART_ITConfig(USART2, USART_IT_RXNE, ENABLE); 
+}
+
+/*********************************************************************************
+Function:       USART1_DMASendData
+Description:    if use this function,DMA1_channl4 needs configurated before.
+Input:             str : point of tx buffer 
+                length : size of tx buffer
+Output:       None
+Return:       don't care.
+Others:       by Mr.kon
+*********************************************************************************/
+u8 USART1_DMASendData(u8 *str, u8 length)
+{
+  if(DMA_GetFlagStatus(DMA1_FLAG_TC4) ==  RESET)
+  {
+    //last fram data has not been transmited completely.
+    return 0;
+  }
+      DMA_Cmd(DMA1_Channel4, DISABLE);
+      DMA_ClearFlag(DMA1_FLAG_TC4);
+      DMA1_Channel4->CNDTR =  length;
+      DMA1_Channel4->CMAR = (u32)str;
+      DMA_Cmd(DMA1_Channel4, ENABLE);
+  return 1;
+}
+
+u8 USART1_GetNumberRecieved(u8 *str, u8 length)
+{     
+  u8 Lenth = 0;
+      DMA_Cmd(DMA1_Channel5, DISABLE);
+   Lenth= length - DMA1_Channel5->CNDTR;
+   DMA1_Channel5->CNDTR  = 0;
+   DMA_Cmd(DMA1_Channel5, ENABLE);
+}
+/*@*****************************end of file*************************************@*/

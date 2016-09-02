@@ -1,0 +1,305 @@
+/*******************************************************************************
+
+File_name:       Model.c
+Version:		     0.0
+Revised:        $Date:2016-2-17 ; $
+Description:    application task.
+Notes:          This version targets the ucos-2
+Editor:		      Mr.Kong
+
+*******************************************************************************/
+#include "includes.h"
+#include "app.h"
+#include "JF24D.h"
+#include "list.h"
+#include "controllayer.h"
+#include "canrxtx.h"
+LIST_ENTRY CL_FrameHeadList;
+extern SYSTEM_INFO systemInfo;
+extern COLLECT_LAYER CL_LY;
+
+OS_STK task_infrared_stk[TASK_INFRARED_STK_SIZE];
+OS_STK task_usart1_cl_stk[TASK_USART1CL_STK_SIZE];
+OS_STK task_usart3_cl_stk[TASK_USART3CL_STK_SIZE];
+OS_STK task_WirelessRx_stk[REMOTE_SCAN_STK_SIZE];
+OS_STK task_canrx_cl_stk[TASK_CANRxCL_STK_SIZE];
+extern  USART usart1;
+extern  USART usart3;
+
+void Task_Start(void *p_arg)
+{
+#if OS_CRITICAL_METHOD == 3u                               /* Allocate storage for CPU status register */
+    OS_CPU_SR  cpu_sr = 0u;
+#endif
+
+    /* init 2402 module*/
+    Wireless_Init();
+
+    /*creat applacation task*/
+    OS_ENTER_CRITICAL()
+    OSTaskCreate(Task_Infrared,(void *)0,		  //红外探测任务
+                 &task_infrared_stk[TASK_INFRARED_STK_SIZE-1], TASK_INFRARED_PRIO);
+
+    OSTaskCreate(Task_USART1_CL,(void *)0,		   	//串口1数据打包
+                 &task_usart1_cl_stk[TASK_USART1CL_STK_SIZE-1], TASK_USART1CL_PRIO);
+
+    OSTaskCreate(Task_USART3_CL,(void *)0,		   	//串口3数据打包
+                 &task_usart3_cl_stk[TASK_USART3CL_STK_SIZE-1], TASK_USART3CL_PRIO);
+
+    OSTaskCreate(Task_WirelessRx,(void *)0,		//无线接收
+                 &task_WirelessRx_stk[TASK_USART1CL_STK_SIZE-1], TASK_WIRELESS_PRIO);
+    OSTaskCreate(Task_CANRx_CL,(void *)0,		//CAN接收
+                 &task_canrx_cl_stk[TASK_CANRxCL_STK_SIZE-1], TASK_CANRxCL_PRIO);
+
+    OSTaskSuspend(TASK_WIRELESS_PRIO);
+    OSTaskSuspend(TASK_USART3CL_PRIO);
+    OSTaskSuspend(TASK_CANRxCL_PRIO);
+
+    /* reset status */
+    CAN_LED_CLOSE
+    RS485_LED_CLOSE
+    RS485_PWR_DISABLE
+
+    /* suspend task self */
+    OSTaskSuspend(OS_PRIO_SELF);
+    OS_EXIT_CRITICAL()
+}
+
+/*******************************************************************************
+Function:     Task_Infrared
+Description:   protocol processed & interface selected,decide where the data 
+               should be sent.
+Input:        None
+Output:       None
+Return:       None
+Others:	      koing2010@2016/2/20
+*******************************************************************************/
+CL_FORMAT CL_Format;
+extern CONTROL_LAYER CT_Info;
+void Task_Infrared(void *p_arg)
+{
+    u8 err = 0;
+
+    (void)p_arg;
+    OSTimeDlyHMSM(0, 0,0,20);
+    CAN_LED_OPEN
+    RS485_LED_OPEN
+    while(IsInitWirelessModuleSuccess() == 0)
+    {
+        Wireless_Init();//初始;
+    }
+    CAN_LED_CLOSE
+    RS485_LED_CLOSE
+    for(;;)
+    {
+      /* wait for usart1 receicing data */
+        OSSemPend( CL_LY.SemCLCopyaOver,0,&err);
+      
+      
+        if(CL_Format.FramLenth == 9 && CL_Format.address == 0xAAAA)
+        {
+            /* data to wireless module */
+            CT_Info.Datadirection = ProtocolControl((pPROTOCOL)&CL_Format.address);
+            USART1_DMASendData((u8*)&CL_Format.address,CL_Format.FramLenth);
+
+            /* resume the explicit task */
+            switch(CT_Info.Datadirection)
+            {
+            case Wireless_Port:
+                OSTaskResume(TASK_WIRELESS_PRIO);;
+                break;
+            case CAN_Port:
+                OSTaskResume(TASK_CANRxCL_PRIO);
+                break;
+            case RS485_Port:
+                RS485_PWR_ENABLE  //enaable 12V DC OUT
+                OSTaskResume(TASK_USART3CL_PRIO);
+                break;
+            default:
+                break;
+
+            }
+        }
+        else
+        {
+            switch(CT_Info.Datadirection)
+            {
+            case Wireless_Port:
+                /* send data to wireless module */
+                Wireless_SendData((u8*)&CL_Format.address,CL_Format.FramLenth);
+                CAN_LED_OPEN
+                RS485_LED_OPEN
+                break;
+
+            case CAN_Port:
+                /* send data to CAN bus */
+                if(CL_Format.FramLenth == sizeof(CanRxMsg)-1)
+                {
+                    // CanTx((PCL_CANFORMAT)&CL_Format.address);
+                    u8* p = (u8*)&CL_Format.address;
+                    CanTx((PCanTxMsg)(++p));//dot not tx port number
+                    CAN_LED_OPEN
+                }
+                break;
+
+            case RS485_Port:
+                /* send data to 485 bus */
+                RS485_Tx_EN
+                USART3_DMASendData((u8*)&CL_Format.address,CL_Format.FramLenth);
+                OSSemPend(CL_LY.Sem485TxComplete,50ul,&err); //wait for Tx complete
+
+                /*DMA transmiting has been complete,but usart transmiting have not .
+                  so it is need to */
+                OSTimeDly(2);
+                RS485_Rx_EN
+                RS485_LED_OPEN
+                break;
+            default:
+                break;
+
+            }
+        }
+
+
+    }
+}
+
+/*******************************************************************************
+Function:     Task_WirelessRx
+Description:  wireless module interrupt service function.
+Input:        None
+Output:       None
+Return:       None
+Others:	      koing2010@2016/2/20
+*******************************************************************************/
+void Task_WirelessRx(void *p_arg)
+{
+
+    /* creat two semaphores */
+    CT_Info.SemWrieRx = OSSemCreate(0);
+    CT_Info.SemWrieTx = OSSemCreate(0);
+    for(;;)
+    {
+        u8 err =0;
+        /* waits for wireless module reveiving data completely */
+        OSSemPend(CT_Info.SemWrieRx,0,&err);
+        CAN_LED_CLOSE
+        RS485_LED_CLOSE
+
+        /*send data to PC by usart1*/
+        USART1_DMASendData(CT_Info.wireless_RxBuffer,CT_Info.wireless_RxCount);
+    }
+}
+
+/*******************************************************************************
+Function:     memcopy
+Description:  memory copy
+Input:        u8* Source : the data copied address
+              u8* Targe  : copy data to
+Output:       None
+Return:       None
+Others:	      koing2010@2016/2/20
+*******************************************************************************/
+void memcopy(u8* Source,u8* Target,u8 Numb)
+{
+    for(; Numb > 0; Numb --)
+    {
+        *Target = *Source;
+        Target ++;
+        Source ++;
+    }
+}
+
+/*******************************************************************************
+Function:     memcopy
+Description:  memory copy
+Input:        u8* Source : the data copied address
+              u8* Targe  : copy data to
+Output:       None
+Return:       None
+Others:	      koing2010@2016/2/20
+*******************************************************************************/
+void Task_USART1_CL(void *p_arg)
+{
+    (void)p_arg;
+    InitializeListHead(&CL_FrameHeadList);
+
+    /*creat a semphore*/
+    CL_LY.SemFramRxComplete = OSSemCreate(0);
+    CL_LY.SemCLCopyaOver = OSSemCreate(0);
+
+    for(;;)
+    {
+        u8 err = 0;
+
+        /**/
+        OSSemPend(CL_LY.SemFramRxComplete,0,&err);
+        CL_Format.FramLenth = USART1_DMAGetNumbRecieved(usart1.usartRxbuf
+                              ,sizeof(usart1.usartRxbuf));
+
+        memcopy(usart1.usartRxbuf,(u8*)&CL_Format.address, CL_Format.FramLenth);
+        OSSemPost(CL_LY.SemCLCopyaOver);
+    }
+}
+
+/*******************************************************************************
+Function:     Task_USART3_CL
+Description:  processing USART3 Rx(485Port) semaphore
+Input:
+Output:       None
+Return:       None
+Others:	      koing2010@2016/2/23
+*******************************************************************************/
+void Task_USART3_CL(void *p_arg)
+{
+
+    CL_LY.Sem485RxComplete = OSSemCreate(0);
+    CL_LY.Sem485TxComplete = OSSemCreate(0);
+
+    for(;;)
+    {
+        u8 err = 0;
+        /**/
+        OSSemPend(CL_LY.Sem485RxComplete,0,&err);
+        RS485_LED_CLOSE
+        /* read data ，input next buffer address and buffer size */
+        CL_LY.RS485RxLenth = USART3_DMAGetNumbRecieved(usart3.usartRxbuf,
+                             sizeof(usart3.usartRxbuf));
+
+        /* source , target ,size */
+        memcopy(usart3.usartRxbuf,CL_LY.RS485Rxdata,CL_LY.RS485RxLenth);
+
+        /* wait for dma tramsmit completely,send data to USART1 */
+        while(USART1_DMASendData((u8*)&CL_Format.address,
+                                 CL_Format.FramLenth) == 0);
+
+    }
+}
+
+/*******************************************************************************
+Function:     Task_CANRx_CL
+Description:  processing CAN Rx semaphore ,and send data to USART1
+Input:
+Output:       None
+Return:       None
+Others:	      koing2010@2016/2/24
+*******************************************************************************/
+void Task_CANRx_CL(void *p_arg)
+{
+    CL_LY.SemCANRxComplete = OSSemCreate(0);
+    for(;;)
+    {
+        u8 err = 0;
+        /* wait CAN rx complete */
+        OSSemPend(CL_LY.SemCANRxComplete,0,&err);
+        CAN_LED_CLOSE
+        /* wait for dma tramsmit completely,send data to USART1 */
+        while(USART1_DMASendData((u8*)&CL_LY.RxMessage,
+                                 sizeof(CL_LY.RxMessage)-1) == 0);
+
+    }
+}
+
+
+
+

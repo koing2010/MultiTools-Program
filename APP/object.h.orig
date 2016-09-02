@@ -1,0 +1,60 @@
+/************************************************************************************
+
+File_name:       Model.h
+Description:    the header file of  Model_c .
+
+************************************************************************************/
+#ifndef     __OBJECT_H__
+#define     __OBJECT_H__
+
+/*==================================================================================
+@ Include files
+*/
+#include "ucos_ii.h"
+#include "stm32f10x.h"
+/*==================================================================================
+@ Typedefs
+*/
+typedef struct USART_
+{
+    OS_EVENT *semUsartTx;
+    u8 currentRxCount;
+    u8 usartTxbuf[40];
+    u8 usartRxbuf[40];   
+
+} USART,*PUSART;
+
+
+/*==================================================================================
+@ Constants and defines
+*/
+typedef struct SYSTEM_
+{
+u8 wireless_address;
+  u8 wireless_channel;
+}SYSTEM_INFO;
+typedef struct CONTROL_
+{
+ u8 data;
+}CONTROL_LAYER;
+
+typedef struct PROTOCOL_
+{
+  u8 data;
+}PROTOCOL_LAYER;
+
+typedef struct COLLECT_
+{
+  u8 data;
+}COLLECT_LAYER;
+
+
+
+
+
+
+
+#endif
+/*@*****************************end of file**************************************@*/
+
+
